@@ -1,10 +1,9 @@
-#!/usr/bin/env python
-
 import os
 import numpy as np
 import time
 import warnings
 import logging
+import argparse
 
 import tensorflow as tf
 from tensorflow.python.ops import ctc_ops
@@ -13,7 +12,7 @@ from tensorflow.python.ops import ctc_ops
 from features.utils.text import ndarray_to_text, sparse_tuple_to_texts
 
 # in future different than utils class
-from models.RNN.utils import create_optimizer
+from smodels.RNN.utils import create_optimizer
 from utilities.set_dirs import get_conf_dir, get_model_dir
 from features.utils.text import sparse_tuple_from
 
@@ -21,6 +20,8 @@ from features.utils.text import sparse_tuple_from
 from smodels.RNN.rnn import BiRNN as BiRNN_model
 
 logger = logging.getLogger(__name__)
+
+FLAGS=None
 
 
 class SpeechTrain(object):
@@ -148,19 +149,19 @@ class SpeechTrain(object):
         dev={}
         dev['batch_size']=1
         dev['n_examples']=2
-        dev['dataset']='dev.tfrecords'
+        dev['dataset']=dirname = os.path.join(FLAGS.buckets, 'dev.tfrecords')
         self.data_sets['dev']=dev
 
         train={}
         train['batch_size']=1
         train['n_examples']=5
-        train['dataset']='train.tfrecords'
+        train['dataset']=dirname = os.path.join(FLAGS.buckets, 'train.tfrecords')
         self.data_sets['train']=train
 
         test={}
         test['batch_size']=1
         test['n_examples']=2
-        test['dataset']='test.tfrecords'
+        test['dataset']=dirname = os.path.join(FLAGS.buckets, 'test.tfrecords')
         self.data_sets['test']=test
 
 
@@ -364,11 +365,11 @@ class SpeechTrain(object):
             if is_validation_step:
                 self.run_validation_step(epoch)
 
-            # if (epoch + 1) == self.epochs or is_checkpoint_step:
-            #     # save the final model
-            #     save_path = self.saver.save(self.sess, os.path.join(
-            #         self.SESSION_DIR, 'model.ckpt'), epoch)
-            #     logger.info("Model saved: {}".format(save_path))
+            if (epoch + 1) == self.epochs or is_checkpoint_step:
+                # save the final model
+                save_path = self.saver.save(self.sess, os.path.join(
+                    self.SESSION_DIR, 'model.ckpt'), epoch)
+                logger.info("Model saved: {}".format(save_path))
 
             if save_dev_model:
                 # If the dev set is not improving,
@@ -542,28 +543,25 @@ class SpeechTrain(object):
 
         return self.train_cost, self.train_ler
 
+def main(config='neural_network.ini', name=None, debug=False):
+    logging.basicConfig(level=logging.DEBUG,
+                        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+    global logger
+    logger = logging.getLogger(os.path.basename(__file__))
+
+    # create the Tf_train_ctc class
+    tf_train_ctc = SpeechTrain( model_name=name, debug=debug)
+
+    # run the training
+    tf_train_ctc.run_model()
 
 # to run in console
+
 if __name__ == '__main__':
-    import click
-
-    # Use click to parse command line arguments
-    @click.command()
-    @click.option('--config', default='neural_network.ini', help='Configuration file name')
-    @click.option('--name', default=None, help='Model name for logging')
-    @click.option('--debug', type=bool, default=False,
-                  help='Use debug settings in config file')
-    # Train RNN model using a given configuration file
-    def main(config='neural_network.ini', name=None, debug=False):
-        logging.basicConfig(level=logging.DEBUG,
-                            format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
-        global logger
-        logger = logging.getLogger(os.path.basename(__file__))
-
-        # create the Tf_train_ctc class
-        tf_train_ctc = SpeechTrain( model_name=name, debug=debug)
-
-        # run the training
-        tf_train_ctc.run_model()
-
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--buckets', type=str, default='',
+                        help='input data path')
+    parser.add_argument('--checkpointDir', type=str, default='',
+                        help='output model path')
+    FLAGS, _ = parser.parse_known_args()
+    tf.app.run(main=main)
