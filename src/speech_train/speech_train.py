@@ -4,24 +4,249 @@ import time
 import warnings
 import logging
 import argparse
+import unicodedata
+import codecs
+import re
 
 import tensorflow as tf
 from tensorflow.python.ops import ctc_ops
 
-# Custom modules
-from features.utils.text import ndarray_to_text, sparse_tuple_to_texts
-
-# in future different than utils class
-from smodels.RNN.utils import create_optimizer
-from utilities.set_dirs import get_conf_dir, get_model_dir
-from features.utils.text import sparse_tuple_from
-
-# Import the setup scripts for different types of model
-from smodels.RNN.rnn import BiRNN as BiRNN_model
-
 logger = logging.getLogger(__name__)
 
+# Constants
+SPACE_TOKEN = '<space>'
+SPACE_INDEX = 0
+FIRST_INDEX = ord('a') - 1  # 0 is reserved to space
+
 FLAGS=None
+
+def sparse_tuple_from(sequences, dtype=np.int32):
+    """
+    Create a sparse representention of ``sequences``.
+
+    Args:
+        sequences: a list of lists of type dtype where each element is a sequence
+    Returns:
+        A tuple with (indices, values, shape)
+
+    This function has been modified from Mozilla DeepSpeech:
+    https://github.com/mozilla/DeepSpeech/blob/master/util/text.py
+
+    # This Source Code Form is subject to the terms of the Mozilla Public
+    # License, v. 2.0. If a copy of the MPL was not distributed with this
+    # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+    """
+
+    indices = []
+    values = []
+
+    for n, seq in enumerate(sequences):
+        indices.extend(zip([n] * len(seq), range(len(seq))))
+        values.extend(seq)
+
+    indices = np.asarray(indices, dtype=np.int64)
+    values = np.asarray(values, dtype=dtype)
+    shape = np.asarray([len(sequences), indices.max(0)[1] + 1], dtype=np.int64)
+
+    # return tf.SparseTensor(indices=indices, values=values, shape=shape)
+    return indices, values, shape
+
+def variable_on_cpu(name, shape, initializer):
+    """
+    Next we concern ourselves with graph creation.
+    However, before we do so we must introduce a utility function ``variable_on_cpu()``
+    used to create a variable in CPU memory.
+    """
+    # Use the /cpu:0 device for scoped operations
+    with tf.device('/cpu:0'):
+        # Create or get apropos variable
+        var = tf.get_variable(name=name, shape=shape, initializer=initializer)
+    return var
+
+def sparse_tuple_to_texts(tuple):
+    '''
+    This function has been modified from Mozilla DeepSpeech:
+    https://github.com/mozilla/DeepSpeech/blob/master/util/text.py
+
+    # This Source Code Form is subject to the terms of the Mozilla Public
+    # License, v. 2.0. If a copy of the MPL was not distributed with this
+    # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+    '''
+    indices = tuple[0]
+    values = tuple[1]
+    results = [''] * tuple[2][0]
+    for i in range(len(indices)):
+        index = indices[i][0]
+        c = values[i]
+        c = ' ' if c == SPACE_INDEX else chr(c + FIRST_INDEX)
+        results[index] = results[index] + c
+    # List of strings
+    return results
+
+def ndarray_to_text(value):
+    '''
+    This function has been modified from Mozilla DeepSpeech:
+    https://github.com/mozilla/DeepSpeech/blob/master/util/text.py
+
+    # This Source Code Form is subject to the terms of the Mozilla Public
+    # License, v. 2.0. If a copy of the MPL was not distributed with this
+    # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+    '''
+    results = ''
+    for i in range(len(value)):
+        results += chr(value[i] + FIRST_INDEX)
+    return results.replace('`', ' ')
+
+def BiRNN_model(batch_x, seq_length, n_input, n_context):
+    """
+    This function was initially based on open source code from Mozilla DeepSpeech:
+    https://github.com/mozilla/DeepSpeech/blob/master/DeepSpeech.py
+
+    # This Source Code Form is subject to the terms of the Mozilla Public
+    # License, v. 2.0. If a copy of the MPL was not distributed with this
+    # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+    """
+
+    dropout = [0.05,0.05,0.05,0.0,0.0,0.05]
+    relu_clip = 20
+
+    b1_stddev = 0.046875
+    h1_stddev = 0.046875
+    b2_stddev = 0.046875
+    h2_stddev = 0.046875
+    b3_stddev = 0.046875
+    h3_stddev = 0.046875
+    b5_stddev = 0.046875
+    h5_stddev = 0.046875
+    b6_stddev = 0.046875
+    h6_stddev = 0.046875
+
+    n_hidden_1 = 1024
+    n_hidden_2 = 1024
+    n_hidden_5 = 1024
+    n_cell_dim = 1024
+
+    n_hidden_3 = 1024
+    n_hidden_6 = 1024
+
+    # Input shape: [batch_size, n_steps, n_input + 2*n_input*n_context]
+    batch_x_shape = tf.shape(batch_x)
+
+    # Reshaping `batch_x` to a tensor with shape `[n_steps*batch_size, n_input + 2*n_input*n_context]`.
+    # This is done to prepare the batch for input into the first layer which expects a tensor of rank `2`.
+
+    # Permute n_steps and batch_size
+    batch_x = tf.transpose(batch_x, [1, 0, 2])
+    # Reshape to prepare input for first layer
+    batch_x = tf.reshape(batch_x,
+                         [-1, n_input + 2 * n_input * n_context])  # (n_steps*batch_size, n_input + 2*n_input*n_context)
+
+    # The next three blocks will pass `batch_x` through three hidden layers with
+    # clipped RELU activation and dropout.
+
+    # 1st layer
+    with tf.name_scope('fc1'):
+        b1 = variable_on_cpu('b1', [n_hidden_1], tf.random_normal_initializer(stddev=b1_stddev))
+        h1 = variable_on_cpu('h1', [n_input + 2 * n_input * n_context, n_hidden_1],
+                             tf.random_normal_initializer(stddev=h1_stddev))
+        layer_1 = tf.minimum(tf.nn.relu(tf.add(tf.matmul(batch_x, h1), b1)), relu_clip)
+        layer_1 = tf.nn.dropout(layer_1, (1.0 - dropout[0]))
+
+        tf.summary.histogram("weights", h1)
+        tf.summary.histogram("biases", b1)
+        tf.summary.histogram("activations", layer_1)
+
+    # 2nd layer
+    with tf.name_scope('fc2'):
+        b2 = variable_on_cpu('b2', [n_hidden_2], tf.random_normal_initializer(stddev=b2_stddev))
+        h2 = variable_on_cpu('h2', [n_hidden_1, n_hidden_2], tf.random_normal_initializer(stddev=h2_stddev))
+        layer_2 = tf.minimum(tf.nn.relu(tf.add(tf.matmul(layer_1, h2), b2)), relu_clip)
+        layer_2 = tf.nn.dropout(layer_2, (1.0 - dropout[1]))
+
+        tf.summary.histogram("weights", h2)
+        tf.summary.histogram("biases", b2)
+        tf.summary.histogram("activations", layer_2)
+
+    # 3rd layer
+    with tf.name_scope('fc3'):
+        b3 = variable_on_cpu('b3', [n_hidden_3], tf.random_normal_initializer(stddev=b3_stddev))
+        h3 = variable_on_cpu('h3', [n_hidden_2, n_hidden_3], tf.random_normal_initializer(stddev=h3_stddev))
+        layer_3 = tf.minimum(tf.nn.relu(tf.add(tf.matmul(layer_2, h3), b3)), relu_clip)
+        layer_3 = tf.nn.dropout(layer_3, (1.0 - dropout[2]))
+
+        tf.summary.histogram("weights", h3)
+        tf.summary.histogram("biases", b3)
+        tf.summary.histogram("activations", layer_3)
+
+    # Create the forward and backward LSTM units. Inputs have length `n_cell_dim`.
+    # LSTM forget gate bias initialized at `1.0` (default), meaning less forgetting
+    # at the beginning of training (remembers more previous info)
+    with tf.name_scope('lstm'):
+        # Forward direction cell:
+        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(n_cell_dim, forget_bias=1.0, state_is_tuple=True)
+        lstm_fw_cell = tf.contrib.rnn.DropoutWrapper(lstm_fw_cell,
+                                                     input_keep_prob=1.0 - dropout[3],
+                                                     output_keep_prob=1.0 - dropout[3],
+                                                     # seed=random_seed,
+                                                     )
+        # Backward direction cell:
+        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(n_cell_dim, forget_bias=1.0, state_is_tuple=True)
+        lstm_bw_cell = tf.contrib.rnn.DropoutWrapper(lstm_bw_cell,
+                                                     input_keep_prob=1.0 - dropout[4],
+                                                     output_keep_prob=1.0 - dropout[4],
+                                                     # seed=random_seed,
+                                                     )
+
+        # `layer_3` is now reshaped into `[n_steps, batch_size, 2*n_cell_dim]`,
+        # as the LSTM BRNN expects its input to be of shape `[max_time, batch_size, input_size]`.
+        layer_3 = tf.reshape(layer_3, [-1, batch_x_shape[0], n_hidden_3])
+
+        # Now we feed `layer_3` into the LSTM BRNN cell and obtain the LSTM BRNN output.
+        outputs, output_states = tf.nn.bidirectional_dynamic_rnn(cell_fw=lstm_fw_cell,
+                                                                 cell_bw=lstm_bw_cell,
+                                                                 inputs=layer_3,
+                                                                 dtype=tf.float32,
+                                                                 time_major=True,
+                                                                 sequence_length=seq_length)
+
+        tf.summary.histogram("activations", outputs)
+
+        # Reshape outputs from two tensors each of shape [n_steps, batch_size, n_cell_dim]
+        # to a single tensor of shape [n_steps*batch_size, 2*n_cell_dim]
+        outputs = tf.concat(outputs, 2)
+        outputs = tf.reshape(outputs, [-1, 2 * n_cell_dim])
+
+    with tf.name_scope('fc5'):
+        # Now we feed `outputs` to the fifth hidden layer with clipped RELU activation and dropout
+        b5 = variable_on_cpu('b5', [n_hidden_5], tf.random_normal_initializer(stddev=b5_stddev))
+        h5 = variable_on_cpu('h5', [(2 * n_cell_dim), n_hidden_5], tf.random_normal_initializer(stddev=h5_stddev))
+        layer_5 = tf.minimum(tf.nn.relu(tf.add(tf.matmul(outputs, h5), b5)), relu_clip)
+        layer_5 = tf.nn.dropout(layer_5, (1.0 - dropout[5]))
+
+        tf.summary.histogram("weights", h5)
+        tf.summary.histogram("biases", b5)
+        tf.summary.histogram("activations", layer_5)
+
+    with tf.name_scope('fc6'):
+        # Now we apply the weight matrix `h6` and bias `b6` to the output of `layer_5`
+        # creating `n_classes` dimensional vectors, the logits.
+        b6 = variable_on_cpu('b6', [n_hidden_6], tf.random_normal_initializer(stddev=b6_stddev))
+        h6 = variable_on_cpu('h6', [n_hidden_5, n_hidden_6], tf.random_normal_initializer(stddev=h6_stddev))
+        layer_6 = tf.add(tf.matmul(layer_5, h6), b6)
+
+        tf.summary.histogram("weights", h6)
+        tf.summary.histogram("biases", b6)
+        tf.summary.histogram("activations", layer_6)
+
+    # Finally we reshape layer_6 from a tensor of shape [n_steps*batch_size, n_hidden_6]
+    # to the slightly more useful shape [n_steps, batch_size, n_hidden_6].
+    # Note, that this differs from the input in that it is time-major.
+    layer_6 = tf.reshape(layer_6, [-1, batch_x_shape[0], n_hidden_6])
+
+    summary_op = tf.summary.merge_all()
+
+    # Output shape: [n_steps, batch_size, n_hidden_6]
+    return layer_6, summary_op
 
 
 class SpeechTrain(object):
@@ -124,7 +349,7 @@ class SpeechTrain(object):
 
     def set_up_directories(self, model_name):
         # Set up model directory
-        self.model_dir = os.path.join(get_model_dir(), self.model_dir)
+        self.model_dir = os.path.join(FLAGS.checkpointDir, self.model_dir)
         # summary will contain logs
         self.SUMMARY_DIR = os.path.join(
             self.model_dir, "summary", self.session_name)
@@ -132,10 +357,12 @@ class SpeechTrain(object):
         self.SESSION_DIR = os.path.join(
             self.model_dir, "session", self.session_name)
 
+        print(self.SUMMARY_DIR)
+
         if not tf.gfile.Exists(self.SESSION_DIR):
-            tf.gfile.MkDir(self.SESSION_DIR)
+            tf.gfile.MakeDirs(self.SESSION_DIR)
         if not tf.gfile.Exists(self.SUMMARY_DIR):
-            tf.gfile.MkDir(self.SUMMARY_DIR)
+            tf.gfile.MakeDirs(self.SUMMARY_DIR)
 
         # set the model name and restore if not None
         if model_name is not None:
@@ -291,7 +518,10 @@ class SpeechTrain(object):
     def setup_optimizer(self):
         # Note: The optimizer is created in models/RNN/utils.py
         with tf.name_scope("train"):
-            self.optimizer = create_optimizer()
+            self.optimizer = tf.train.AdamOptimizer(learning_rate=0.001,
+                                                   beta1=0.9,
+                                                   beta2=0.999,
+                                                   epsilon=1e-8)
             self.optimizer = self.optimizer.minimize(self.avg_loss)
 
     def setup_decoder(self):
