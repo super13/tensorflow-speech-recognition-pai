@@ -22,7 +22,7 @@ for root, dirs, files in os.walk(sys.argv[1]):
         if fname.endswith('.txt'):
             txt_files.append(os.path.join(root, fname))
 
-chunks_list = chunks(txt_files, 16)
+chunks_list = chunks(txt_files, 32)
 index = 0
 for txt_file in chunks_list:
     wav_files = [x.replace('.txt', '.wav') for x in txt_file]
