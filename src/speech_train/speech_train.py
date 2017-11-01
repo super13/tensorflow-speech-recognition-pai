@@ -7,7 +7,6 @@ import time
 import warnings
 import logging
 import argparse
-import psutil
 import pickle
 
 
@@ -22,13 +21,6 @@ SPACE_INDEX = 0
 FIRST_INDEX = ord('a') - 1  # 0 is reserved to space
 
 FLAGS = None
-
-
-def memory():
-    pid = os.getpid()
-    py = psutil.Process(pid)
-    memory_use = py.memory_info()[0]/2.**30
-    print('memory use:', memory_use)
 
 
 def variable_on_cpu(name, shape, initializer):
@@ -377,19 +369,19 @@ class SpeechTrain(object):
     def set_up_model(self):
         self.data_sets = {}
         dev = {}
-        dev['batch_size'] = 16
+        dev['batch_size'] = 32
         dev['n_examples'] = 2703
         dev['dataset'] = os.path.join(FLAGS.buckets, 'dev-data')
         self.data_sets['dev'] = dev
 
         train = {}
-        train['batch_size'] = 16
+        train['batch_size'] = 32
         train['n_examples'] = 28539
         train['dataset'] = os.path.join(FLAGS.buckets, 'train-data')
         self.data_sets['train'] = train
 
         test = {}
-        test['batch_size'] = 16
+        test['batch_size'] = 32
         test['n_examples'] = 2620
         test['dataset'] = os.path.join(FLAGS.buckets, 'test-data')
         self.data_sets['test'] = test
@@ -727,7 +719,6 @@ class SpeechTrain(object):
                 batch_cost, _ = self.sess.run(
                     [self.avg_loss, self.optimizer], feed)
                 self.train_cost += batch_cost * dataset['batch_size']
-                memory()
                 logger.debug(
                     '''Batch cost: {}
                     Train cost: {}

@@ -45,4 +45,4 @@ for txt_file in chunks_list:
     print("index:", index)
     output = open(sys.argv[2]+'/pk_data' + str(index), 'wb')
     index += 1
-    pickle.dump(d, output)
+    pickle.dump(d, output, protocol=2)
