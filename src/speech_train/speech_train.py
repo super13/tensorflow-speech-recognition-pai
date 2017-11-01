@@ -369,19 +369,19 @@ class SpeechTrain(object):
     def set_up_model(self):
         self.data_sets = {}
         dev = {}
-        dev['batch_size'] = 32
+        dev['batch_size'] = 16
         dev['n_examples'] = 2703
         dev['dataset'] = os.path.join(FLAGS.buckets, 'dev-data')
         self.data_sets['dev'] = dev
 
         train = {}
-        train['batch_size'] = 32
+        train['batch_size'] = 16
         train['n_examples'] = 28539
         train['dataset'] = os.path.join(FLAGS.buckets, 'train-data')
         self.data_sets['train'] = train
 
         test = {}
-        test['batch_size'] = 32
+        test['batch_size'] = 16
         test['n_examples'] = 2620
         test['dataset'] = os.path.join(FLAGS.buckets, 'test-data')
         self.data_sets['test'] = test
