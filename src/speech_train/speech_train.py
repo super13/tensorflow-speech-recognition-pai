@@ -32,7 +32,7 @@ def variable_on_cpu(name, shape, initializer):
     used to create a variable in CPU memory.
     """
     # Use the /cpu:0 device for scoped operations
-    with tf.device('/cpu:0'):
+    with tf.device('/gpu:0'):
         # Create or get apropos variable
         var = tf.get_variable(name=name, shape=shape, initializer=initializer)
     return var
@@ -615,25 +615,6 @@ class SpeechTrain(object):
         logger.info('Training complete, total duration: {:.2f} min'.format(
             train_duration / 60))
 
-    def read_and_decode(self, filename):  # tfrecords
-        filename_queue = tf.train.string_input_producer([filename])
-        # 生成一个queue队列
-
-        reader = tf.TFRecordReader()
-        _, serialized_example = reader.read(filename_queue)  # 返回文件名和文件
-        features = tf.parse_single_example(
-            serialized_example,
-            features={
-                'source': tf.VarLenFeature(dtype=tf.float32),
-                'source_lengths': tf.FixedLenFeature([], tf.int64),
-                'label': tf.VarLenFeature(dtype=tf.int64),
-            })
-
-        source = features['source']
-        source_lengths = features['source_lengths']
-        label = features['label']
-        return source, source_lengths, label
-
     def read_pickle_data(self, fpath):
         with tf.gfile.FastGFile(fpath, 'rb') as f:
             object = f.read()
@@ -714,11 +695,16 @@ class SpeechTrain(object):
             # If the is_training is false,
             # this means straight decoding without compthreadsuting loss
             if is_training:
+                start_time = time.time()
                 # avg_loss is the loss_op, optimizer is the train_op;
                 # running these pushes tensors (data) through graph
+                print(np.shape(source))
+                print(np.shape(sparse_labels))
+                print(np.shape(source_lengths))
                 batch_cost, _ = self.sess.run(
                     [self.avg_loss, self.optimizer], feed)
                 self.train_cost += batch_cost * dataset['batch_size']
+                print("dddddddddddddddd", time.time()-start_time)
                 logger.debug(
                     '''Batch cost: {}
                     Train cost: {}
