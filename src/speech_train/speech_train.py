@@ -371,6 +371,8 @@ class SpeechTrain(object):
         dev = {}
         dev['batch_size'] = 16
         dev['n_examples'] = 2703
+        if FLAGS.buckets:
+            FLAGS.buckets = "cached://" + FLAGS.buckets
         dev['dataset'] = os.path.join(FLAGS.buckets, 'dev-data')
         self.data_sets['dev'] = dev
 
@@ -686,7 +688,7 @@ class SpeechTrain(object):
         for batch in range(n_batches_per_epoch):
             # Get next batch of training data (audio features) and transcripts
             source, source_lengths, sparse_labels = self.read_pickle_data(
-                dataset['dataset'] + '/pk_data'+str(batch))
+                dataset['dataset'] + '/pk_data' + str(batch))
 
             feed = {self.input_tensor: source,
                     self.targets: sparse_labels,
@@ -704,7 +706,7 @@ class SpeechTrain(object):
                 batch_cost, _ = self.sess.run(
                     [self.avg_loss, self.optimizer], feed)
                 self.train_cost += batch_cost * dataset['batch_size']
-                print("dddddddddddddddd", time.time()-start_time)
+                print("dddddddddddddddd", time.time() - start_time)
                 logger.debug(
                     '''Batch cost: {}
                     Train cost: {}
