@@ -17,17 +17,17 @@ LibriSpeech ASR corpus http://www.openslr.org/12
 
 ##### 首先转flac到wav 需要安装ffmpeg
 
-###### <font color=red>./flactowav.sh dev-clean</font>
+###### ./flactowav.sh dev-clean
 
 ##### 接着把单个的label文件处理成对应多个
 
-###### <font color=red>python processAllTxt.py dev-clean</font>
+###### python processAllTxt.py dev-clean
 
 ###### 最后用pickle把数据处理对应直接读取的对象
 
 ##### 因为pai不能直接用各种原生的读取文件函数，比如scipy里读取音频之类的。
 
-###### <font color=red>python wavtopickles.py dev-clean dev-data</font>  #第一个参数是文件的目录，第二个是生成的文件目录
+###### python wavtopickles.py dev-clean dev-data  #第一个参数是文件的目录，第二个是生成的文件目录
 
 建议在阿里云华东2内网操作，因为生成出来有几十个g，内网传上去比较快。
 
@@ -35,7 +35,7 @@ LibriSpeech ASR corpus http://www.openslr.org/12
 
 ## 训练模型
 
-###### <font color=red>python speech_train.py</font> #本地
+###### python speech_train.py #本地
 
 pai上就选好文件个输入输出目录就可以了。
 
